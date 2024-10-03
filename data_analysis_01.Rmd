@@ -32,6 +32,8 @@ It will be much easier to construct plots and mutate our data if we can compile 
 data_frame <- data.frame(
     id = numeric(),
     name = character(),
+    receptor = character(),
+    ligand = character(),
     x_coord = numeric(),
     y_coord = numeric(),
     z_coord = numeric(),
@@ -59,6 +61,7 @@ Let's first make a function that will extract the coordinates from a data file. 
 get_coords <- function(file, line) {
     start_of_coords <- 32
     coord_list <- list()
+    
     x_coord <- substr(file[line], start_of_coords, start_of_coords+6)
     y_coord <- substr(file[line], start_of_coords+8, start_of_coords+14)
     z_coord <- substr(file[line], start_of_coords+16, start_of_coords+22)
@@ -90,7 +93,7 @@ get_hetatm_lines <- function(file) {
     total_lines <- length(file)
     list_hetatm_positions = list()
     for (i in 2:total_lines) {
-        if (substr(file[i], 1, 6) == "HETATM"){
+        if (substr(file[i], 1, 6) == "HETATM" || substr(file[i], 1, 4) == "ATOM"){
             list_hetatm_positions <- c(list_hetatm_positions, i)
         }
         if (substr(file[i], 1, 5) == "MODEL"){
@@ -125,6 +128,8 @@ for (i in 1:total_length){                         #for each pdbqt file
                 13,
                 nchar(pdbqt_files[i])-6
             ),
+            receptor = substr(pdbqt_files[i], 13, 20),
+            ligand = substr(pdbqt_files[i], 22, 24),
             x_coord = as.numeric(coord_list[1]),            #x_coord for that atom
             y_coord = as.numeric(coord_list[2]),            #y_coord for that atom
             z_coord = as.numeric(coord_list[3]),            #z_coord for that atom
@@ -144,3 +149,5 @@ Awesome! We now have 26,088 rows of atom coordinates
 glimpse(data_frame)
 write.csv(data_frame, "cleaned_data_tables\\starting_data.csv")
 ```
+
+Now that we have a new CSV, lets make a new RMD script that will scan our csv so we can avoid making a new CSV everytime we run the next steps.
