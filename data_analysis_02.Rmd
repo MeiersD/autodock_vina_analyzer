@@ -1,0 +1,72 @@
+# Averaging coords
+Alright, it would be nice if we could simplify our data table such that we only have the average of all the ligand atom positions rather than the coords of every single atom. Lets make a new data frame for this purpose
+
+```{r}
+#Construct an empty dataframe, and initalize the columns
+data_frame_ave <- data.frame(
+    id = numeric(),
+    name = character(),
+    receptor = character(),
+    ligand = character(),
+    x_coord_ave = numeric(),
+    y_coord_ave = numeric(),
+    z_coord_ave = numeric(),
+    affinity = numeric(),
+    stringsAsFactors = FALSE
+)
+```
+
+Okay, now that we have this dataframe, lets create a loop that will iterate through our starting_data.csv and average all coords with the same name
+
+First lets install packages:
+```{r}
+library(tidyverse)
+library(progress)
+library(dplyr)
+```
+
+```{r}
+data <- read.csv("cleaned_data_tables/starting_data.csv")
+
+data_frame_ave <-  summarise(
+    group_by(data, name, receptor, ligand, model),
+    x_coord_ave = mean(x_coord),
+    y_coord_ave = mean(y_coord),
+    z_coord_ave = mean(z_coord),
+    .groups = 'drop'
+  ) %>%
+  mutate(id = row_number()) %>%
+  select(id, name, receptor, ligand, x_coord_ave, y_coord_ave, z_coord_ave, model, affinity)
+
+# glimpse(data_frame_ave) # There are now 2400 rows
+```
+
+Fantastic, now lets filter this into a new data frame that only contains models that are within the bounding box
+```{r}
+data_frame_in_box <- data_frame_ave %>%
+  mutate(
+    in_range = ifelse(
+    x_coord_ave > 153.0 & x_coord_ave < 167.0 &
+    y_coord_ave > 177.5 & y_coord_ave < 188.5 &
+    z_coord_ave > 148.5 & z_coord_ave < 167.0,
+    1, 0)
+  ) %>%
+  filter(in_range == 1) %>%
+  select(-in_range)
+    
+# glimpse(data_frame_in_box) # There are now only 1510 rows
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
