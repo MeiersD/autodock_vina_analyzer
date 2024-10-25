@@ -11,6 +11,7 @@ data_frame_ave <- data.frame(
     x_coord_ave = numeric(),
     y_coord_ave = numeric(),
     z_coord_ave = numeric(),
+    model = numeric(),
     affinity = numeric(),
     stringsAsFactors = FALSE
 )
@@ -23,50 +24,78 @@ First lets install packages:
 library(tidyverse)
 library(progress)
 library(dplyr)
+library(cowplot)
+library(plotly)
 ```
 
-```{r}
-data <- read.csv("cleaned_data_tables/starting_data.csv")
-
-data_frame_ave <-  summarise(
-    group_by(data, name, receptor, ligand, model),
-    x_coord_ave = mean(x_coord),
-    y_coord_ave = mean(y_coord),
-    z_coord_ave = mean(z_coord),
-    .groups = 'drop'
-  ) %>%
-  mutate(id = row_number()) %>%
-  select(id, name, receptor, ligand, x_coord_ave, y_coord_ave, z_coord_ave, model, affinity)
-
-# glimpse(data_frame_ave) # There are now 2400 rows
-```
+Lets read our starting_data.csv to a new data frame.
 
 Fantastic, now lets filter this into a new data frame that only contains models that are within the bounding box
 ```{r}
-data_frame_in_box <- data_frame_ave %>%
+x_lower <- 153.0
+x_upper <- 167.0
+y_lower <- 177.5
+y_upper <- 188.5
+z_lower <- 148.5
+z_upper <- 167.0
+
+data_frame_in_box <- read.csv("cleaned_data_tables/starting_data.csv") %>%
   mutate(
     in_range = ifelse(
-    x_coord_ave > 153.0 & x_coord_ave < 167.0 &
-    y_coord_ave > 177.5 & y_coord_ave < 188.5 &
-    z_coord_ave > 148.5 & z_coord_ave < 167.0,
+    avg_x_coord > x_lower & avg_x_coord < x_upper &
+    avg_y_coord > y_lower & avg_y_coord < y_upper &
+    avg_z_coord > z_lower & avg_z_coord < z_upper,
     1, 0)
-  ) %>%
-  filter(in_range == 1) %>%
-  select(-in_range)
+  )
     
 # glimpse(data_frame_in_box) # There are now only 1510 rows
 ```
 
+I am curious to know about the distribution of the average atom positions in space, I expect the distribution to be multimodal. Lets add a new column to the data frame which measues the distance between each average atom position and the center of the box.
+```{r}
+find_dist <- function(x1, y1, z1, x2, y2, z2) {
+  sqrt((x1 - x2)^2 + (y1 - y2)^2 + (z1 - z2)^2)
+}
 
+box_coord_x <- mean(c(x_lower, x_upper))
+box_coord_y <- mean(c(y_lower, y_upper))
+box_coord_z <- mean(c(z_lower, z_upper))
 
+data_frame_in_box <- data_frame_in_box %>%
+    rowwise() %>%
+    mutate(distance_from_center = find_dist(
+        avg_x_coord, avg_y_coord, avg_z_coord,
+        box_coord_x, box_coord_y, box_coord_z
+    )) %>%
+    ungroup()
 
+# ggplot(data_frame_in_box, aes(x=distance_from_center)) + 
+#      geom_histogram( binwidth=0.2, fill="#69b3a2", color="#e9ecef", alpha=0.9) +
+#   theme_cowplot()
 
+glimpse(data_frame_in_box)
+```
 
+Okay, lets try another method of visualize
+```{r}
+# Create the 3D scatter plot
+plot <- data_frame_in_box %>%
+  plot_ly(
+      x = ~avg_x_coord, 
+      y = ~avg_y_coord,
+      z = ~avg_z_coord,
+      color = ~as.factor(in_range),
+      colors = c("blue", "red")
+    ) %>%
+  add_markers() %>%
+  layout(scene = list(
+    xaxis = list(title = 'X'),
+    yaxis = list(title = 'Y'),
+    zaxis = list(title = 'Z')
+  ))
 
-
-
-
-
+plot
+```
 
 
 

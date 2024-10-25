@@ -22,7 +22,6 @@ options(warn = -1)
 library(readr)
 library(tidyverse)
 library(progress)
-library(qmrparser)
 library(dplyr)
 ```
 
@@ -38,14 +37,37 @@ data_frame <- data.frame(
     y_coord = numeric(),
     z_coord = numeric(),
     affinity = numeric(),
+    model = numeric(),
     stringsAsFactors = FALSE
 )
 ```
 
 Next we need to harvest the names all of the .pdbqt files in our pdbqt_files directory. Let's add them to a character vector called pdbqt_files.
 ```{r}
-#sets variable pdbqt_files to be a vector of strings, where each element is a file path
+# Define the ligands to include
+include_ligands <- c(
+  "001", "002", "003", "004", "005", "010", "016", "017", "018", "019", "020",
+  "021", "022", "023", "025", "026", "028", "030", "031", "034", "035", "037",
+  "038", "039", "043", "044", "046", "047", "048", "049", "050", "052", "054",
+  "055", "057", "058", "064", "066", "067", "068", "069", "070", "071", "073",
+  "074", "075", "076", "077", "079", "080", "082", "083", "084", "085", "087",
+  "089", "090", "091", "092", "093", "094", "095", "098", "100", "101", "102",
+  "103", "105", "108", "109", "112", "113", "114", "116", "117", "118", "119",
+  "120", "121", "122", "123", "124", "125", "126", "129", "130", "131", "133",
+  "134", "135", "136", "139", "140", "141", "144", "145", "146", "147", "148",
+  "149", "150", "151", "152", "153", "154", "155", "156", "157", "158", "159",
+  "160", "161", "162", "164", "165", "166", "167", "168", "169", "170", "171",
+  "172", "174", "176", "177", "178", "179", "182", "183", "184", "185", "186",
+  "187", "188", "189", "190", "191", "193", "194", "195", "196", "197"
+)
+
+# List all pdbqt files
 pdbqt_files <- list.files(path = "pdbqt_files/", pattern = "\\.pdbqt$", full.names = TRUE)
+
+# Filter files to include only those with specified ligands
+pdbqt_files <- pdbqt_files[sapply(pdbqt_files, function(file) {
+  any(sapply(include_ligands, function(ligand) grepl(ligand, basename(file))))
+})]
 ```
 
 ### Creating Functions
@@ -55,7 +77,7 @@ Let's first make a function that will extract the coordinates from a data file. 
 # gets the coordinates of a file
 # @param file   character vector where each element is a line in a .pdbqt file
 # @param line   specifies the line in file to scan, specifically a HETATM line
-# @return       returns a list of coords for model1, as a string
+# @return       returns a list of coords for current model, as a string
 ################################################################################
 
 get_coords <- function(file, line) {
@@ -74,11 +96,17 @@ Let's now make a function that will tell us the affinity of a ligand in a pdbqt 
 ###################################################################################
 # gets the affinity of a file
 # @param file   character vector where each element is a line in a .pdbqt file
-# @param line   specifies the line in file to scan, specifically the affinity line
-# @return       returns the affinity for model1, as a string
+# @param model  int specifying which model to look through for the affinity
+# @return       returns the affinity for model, as a string
 ###################################################################################
-get_affinity <- function(file, hetatm_lines) {
-    return (substr(file[2], 26, 29))
+get_affinity <- function(file, model) {
+    total_lines <- length(file)
+    for (i in 1:total_lines) {
+        if (substr(file[i], 1, 7) == paste0("MODEL ", as.character(model))){
+            return (substr(file[i+1], 26, 29))
+        }
+    }
+    return("error, unable to find the current model's affinity")
 }
 ```
 
@@ -87,17 +115,26 @@ Finally, let's make a method that will return a list of ints for each hetatm in 
 #############################################################################################################
 # gets the lines in a file which contain HETATM coords
 # @param file   character vector where each element is a line in a .pdbqt file
-# @return       returns a list of ints, where each int represents a line in model1 which has HETATM coords
+# @param model  int which specifies which model to parse in the .pdbqt file
+# @return       returns a list of ints, where each int represents a line in model which has HETATM coords
 #############################################################################################################
-get_hetatm_lines <- function(file) {
+get_hetatm_lines <- function(file, model) {
     total_lines <- length(file)
     list_hetatm_positions = list()
-    for (i in 2:total_lines) {
-        if (substr(file[i], 1, 6) == "HETATM" || substr(file[i], 1, 4) == "ATOM"){
-            list_hetatm_positions <- c(list_hetatm_positions, i)
+    in_recording_region = FALSE
+    for (i in 1:total_lines) {
+        if (substr(file[i], 1, 7) == paste0("MODEL ", as.character(model))){
+            in_recording_region = TRUE
         }
-        if (substr(file[i], 1, 5) == "MODEL"){
-            break
+        if (substr(file[i], 1, 7) == paste0("MODEL ", as.character(model+1))){
+            in_recording_region = FALSE
+            break;
+        }
+        if (in_recording_region)
+        {   
+            if (substr(file[i], 1, 6) == "HETATM" || substr(file[i], 1, 4) == "ATOM"){
+                list_hetatm_positions <- c(list_hetatm_positions, i)
+            }
         }
     }
     return (list_hetatm_positions)
@@ -107,39 +144,66 @@ get_hetatm_lines <- function(file) {
 ### Creating the data table
 Now we can begin the data extraction. We can iterate through all names in our pdbqt_files vector, and for each one add a new row to data_frame.
 ```{r}
-#add a progress bar, because there are a lot of files to go through, and I get pretty impatient
+
+
+# Initialize the progress bar
 total_length <- length(pdbqt_files)
-pb <- progress_bar$new(total = total_length)
+pb <- progress_bar$new(total = total_length * 9)
+
 temp_id <- 1
-#adds a new row to data_frame for each HETATM coordinate in each .pdbqt file
-for (i in 1:total_length){                         #for each pdbqt file
-    file <- file(pdbqt_files[i], open="r") %>%     #open the file as a txt file
-        readLines(n = -1)
-    curr_affinity <- get_affinity(file)            #store the affinity for that file
-    hetatm_lines <- get_hetatm_lines(file)         #store the lines of the file which contain HETATM coords
+
+for (i in 1:total_length) {  # For each pdbqt file
+  for (curr_model in 1:9) {  # For each model
     
-    for (line_num in hetatm_lines){                     #for each line saved in hetatm_lines
-        coord_list <- list() %>%                        #saves the coords of the HETATM for that line
-            c(get_coords(file, line_num))
-        new_row <- data.frame(                          #create a new row with the following values:
-            id = temp_id,                                   #id is the row number
-            name = substr(                                  #name is the file name
-                pdbqt_files[i],
-                13,
-                nchar(pdbqt_files[i])-6
-            ),
-            receptor = substr(pdbqt_files[i], 13, 20),
-            ligand = substr(pdbqt_files[i], 22, 24),
-            x_coord = as.numeric(coord_list[1]),            #x_coord for that atom
-            y_coord = as.numeric(coord_list[2]),            #y_coord for that atom
-            z_coord = as.numeric(coord_list[3]),            #z_coord for that atom
-            affinity = as.numeric(curr_affinity),                       #affinity equal to the stored affinity
-            stringsAsFactors = FALSE                        #strings are strings
-        )
-        data_frame <- rbind(data_frame, new_row)        #adds the new row to the data frame
-        temp_id <- temp_id + 1                          #updates the id number for the next row
+    # Open and read the file
+    file <- readLines(file(pdbqt_files[i], open = "r"))
+    
+    # Get the affinity for the current model
+    curr_affinity <- get_affinity(file, curr_model)
+    
+    # Get all lines with HETATM coordinates for the current model
+    hetatm_lines <- get_hetatm_lines(file, curr_model)
+    
+    # Create vectors to accumulate coordinates
+    x_coords <- c()
+    y_coords <- c()
+    z_coords <- c()
+    
+    # For each line with HETATM coordinates, extract and accumulate coordinates
+    for (line_num in hetatm_lines) {
+      coords <- get_coords(file, line_num)
+      x_coords <- c(x_coords, as.numeric(coords[1]))
+      y_coords <- c(y_coords, as.numeric(coords[2]))
+      z_coords <- c(z_coords, as.numeric(coords[3]))
     }
-    pb$tick()                                       #updates the loading bar
+    
+    # Calculate average coordinates if we have any
+    if (length(x_coords) > 0) {
+      avg_x <- mean(x_coords, na.rm = TRUE)
+      avg_y <- mean(y_coords, na.rm = TRUE)
+      avg_z <- mean(z_coords, na.rm = TRUE)
+      
+      # Add a new row to data_frame with averaged coordinates
+      new_row <- data.frame(
+        id = temp_id,
+        name = substr(pdbqt_files[i], 13, nchar(pdbqt_files[i]) - 6),
+        receptor = substr(pdbqt_files[i], 13, 20),
+        ligand = substr(pdbqt_files[i], 22, 24),
+        avg_x_coord = avg_x,
+        avg_y_coord = avg_y,
+        avg_z_coord = avg_z,
+        model = curr_model,
+        affinity = as.numeric(curr_affinity),
+        stringsAsFactors = FALSE
+      )
+      
+      data_frame <- rbind(data_frame, new_row)
+      temp_id <- temp_id + 1
+    }
+    
+    # Update progress bar
+    pb$tick()
+  }
 }
 ```
 
