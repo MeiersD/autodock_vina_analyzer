@@ -39,7 +39,7 @@ y_upper <- 188.5
 z_lower <- 148.5
 z_upper <- 167.0
 
-data_frame_in_box <- read.csv("cleaned_data_tables/starting_data.csv") %>%
+data_frame_in_box <- read.csv("cleaned_data_tables/starting_data_11_4.csv") %>%
   mutate(
     in_range = ifelse(
     avg_x_coord > x_lower & avg_x_coord < x_upper &

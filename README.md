@@ -1,2 +1,4 @@
-# pdbqt_file_scan
-Rmd file to extract useful data from pdbqt files. I suspect this whole thing would be quite a bit easier in Notebooks, but R will suffice I believe
+## What is this repository?
+This repository contains the work I did in Dr. Jordan Lingo's *in silico* biology lab for the Fall 2024 semester. Please view the html file containing my findings for the semester. **SPOILER** The analysis did not find anything useful but there are some cool data visualizations of the distribution of locations where ligands bind to various olfactory receptors of insects.
+
+The data was calculated in R, file type is rmd so github is not recognizing it as R, but that is how the analysis was done. Chop.py is just a script to clean the data.

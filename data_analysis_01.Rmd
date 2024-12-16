@@ -62,12 +62,12 @@ include_ligands <- c(
 )
 
 # List all pdbqt files
-pdbqt_files <- list.files(path = "pdbqt_files/", pattern = "\\.pdbqt$", full.names = TRUE)
+pdbqt_files <- list.files(path = "docking_11_4/", pattern = "\\.pdbqt$", full.names = TRUE)
 
 # Filter files to include only those with specified ligands
-pdbqt_files <- pdbqt_files[sapply(pdbqt_files, function(file) {
-  any(sapply(include_ligands, function(ligand) grepl(ligand, basename(file))))
-})]
+# pdbqt_files <- pdbqt_files[sapply(pdbqt_files, function(file) {
+#   any(sapply(include_ligands, function(ligand) grepl(ligand, basename(file))))
+# })]
 ```
 
 ### Creating Functions
@@ -211,7 +211,7 @@ for (i in 1:total_length) {  # For each pdbqt file
 Awesome! We now have 26,088 rows of atom coordinates
 ```{r}
 glimpse(data_frame)
-write.csv(data_frame, "cleaned_data_tables\\starting_data.csv")
+write.csv(data_frame, "cleaned_data_tables\\starting_data_11_4.csv")
 ```
 
 Now that we have a new CSV, lets make a new RMD script that will scan our csv so we can avoid making a new CSV everytime we run the next steps.
