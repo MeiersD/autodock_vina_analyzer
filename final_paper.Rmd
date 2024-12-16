@@ -1,0 +1,293 @@
+# Meiers Dixon Research Paper: Data Analysis of Docking
+---
+## Intro
+This semester, our lab set out to test the validity of the various *in silico* methods. Ultimately, we aimed to predict which small molecules would be responsible for fireflies finding mates. However, first, we needed to determine if docking experiments would be accurate enough to produce useful results. To do this, we examined a paper studying bedbugs. This paper measured the effect of various small molecules on the olfactory receptors found in *Cimex*, but did so *in vitro*, meaning that if we could directly compare our data with theirs, we could argue that our methodologies were accurate enough to be predictive of the fireflies’ olfactory receptors. The *Cimex* paper provided binding affinity data of various ligands for a whole swath of receptors. They tested hundreds of ligands to produce data on the binding affinity of each pair of enzymes and ligands.
+
+Our approach involved a technique called docking. But before we could perform this technique, we needed to stabilize the protein structure, as PDB files collected from X-ray crystallography are often not in their most stable conformation. In our approach, the protein PDB file was selected and then uploaded to I-TASSER to relax the bonds. This process usually takes about a day and returns several models of possible protein structures with the most stable conformation. In this step, I was responsible for collecting the structures of three receptors, ClecOR42, ClecOR46, and ClecOR47. In total, our group tested 13 receptors, but because I-TASSER is time-consuming, we split this step up. Once a stable protein structure was obtained for each receptor, we shared our structures, cleaned up the structures in YASARA for energy minimization, and began docking. Docking is a process in which the computer takes a ligand, and tries to find the most stable location and orientation when given a particular protein structure. It goes through every possible location and checks whether there are any steric clashes or unfavorable intermolecular interactions. This was done with a program called AutoDock Vina. This is a Python script and produces 9 different models for any given ligand-receptor interaction. The resulting file is in the .pdbqt format, which contains the coordinates of the ligand’s atoms in nine potential ligand positions. We tested each ligand-receptor interaction this way, meaning 10 receptors and 142 ligands resulted in 1420 combinations and 12780 models. From here, we proceeded to analyze the data using R. First, because we had 1420 pdbqt files, we decided to use R to create a CSV file containing all of the information contained within each file. Then, we used R to plot the data and see how it correlated with the original data.
+
+The challenge now was to take these 12780 models and transform them into data that could be directly compared to the data in the *Cimex* paper. We had several different theories on ways to do this, but I tried the approach of checking the center of mass of each ligand, and seeing if it was centerd within the binding pocket of the ligand. Originally, I was planning on storing each atom of every model in the data table (to run analysis on things such as minimum distance between the ligand and receptor), but this produced a data table over a million lines long, and was hundreds of Megabytes. This was too large to work with, so instead I took the center of mass of each ligand and stored that in a CSV file. Now we just need to check if the center of mass falls within the binding pocket of the ligand. If it does, then we know that this model is valid and should be included in our final analysis.
+
+### Data Information
+When I started data analysis, I first had 1420 pdbqt files to parse. A pdbqt file is not just a list of coordinates, like a pdb file there are lines dedicated to information about the model number, start and end of the model, remarks on the status, and remarks on the Vina's predicted stability. In order to create a CSV file with the center of masses of each ligand, I needed to scan each pdbqt file and pull out the relevant information. This information included:
+- Model affinity
+- Model name
+- Atom coordinates
+- Model number
+
+## Data Analysis
+The following sections describe the steps taken to analyze the data.
+
+### Importing packages
+To create the CSV, first imported packages, and I took all of my pdbqt files and then add them to a dataframe.
+```{r}
+#import packages
+options(warn = -1)
+library(readr)
+library(tidyverse)
+library(progress)
+library(dplyr)
+library(plotly)
+```
+
+### Constructing the data frame
+Rather than creating a dataframe by hand, I wanted to automate the creation of the dataframe. For my data, I was interested in the name, xyz coordinate positions for the ligand, as well as the affinity each ligand has. I construced a data frame like so, initially making it entirely empty.
+```{r}
+#Construct an empty dataframe, and initalize the columns
+data_frame <- data.frame(
+    id = numeric(),
+    name = character(),
+    receptor = character(),
+    ligand = character(),
+    avg_x_coord = numeric(),
+    avg_y_coord = numeric(),
+    avg_z_coord = numeric(),
+    affinity = numeric(),
+    model = numeric(),
+    stringsAsFactors = FALSE
+)
+```
+
+### Saving the pdbqt files to be parsed
+Next, I needed to harvest all of the names from the .pdbqt files in the directory which housed them. I added the names to a vector called pdbqt_files, so I could automate the parsing process.
+```{r}
+# Define the ligands to include
+include_ligands <- c(
+  "001", "002", "003", "004", "005", "010", "016", "017", "018", "019", "020",
+  "021", "022", "023", "025", "026", "028", "030", "031", "034", "035", "037",
+  "038", "039", "043", "044", "046", "047", "048", "049", "050", "052", "054",
+  "055", "057", "058", "064", "066", "067", "068", "069", "070", "071", "073",
+  "074", "075", "076", "077", "079", "080", "082", "083", "084", "085", "087",
+  "089", "090", "091", "092", "093", "094", "095", "098", "100", "101", "102",
+  "103", "105", "108", "109", "112", "113", "114", "116", "117", "118", "119",
+  "120", "121", "122", "123", "124", "125", "126", "129", "130", "131", "133",
+  "134", "135", "136", "139", "140", "141", "144", "145", "146", "147", "148",
+  "149", "150", "151", "152", "153", "154", "155", "156", "157", "158", "159",
+  "160", "161", "162", "164", "165", "166", "167", "168", "169", "170", "171",
+  "172", "174", "176", "177", "178", "179", "182", "183", "184", "185", "186",
+  "187", "188", "189", "190", "191", "193", "194", "195", "196", "197"
+)
+
+# List all pdbqt files
+pdbqt_files <- list.files(path = "docking_11_4/", pattern = "\\.pdbqt$", full.names = TRUE)
+```
+
+### Creating Functions
+I then proceeded to make functions that I would need for the parsing process. I first needed a function that would return a three lists of doubles containing the x, y, and z positions of each atom in a given model.
+```{r}
+################################################################################
+# gets the coordinates of a file
+# @param file   character vector where each element is a line in a .pdbqt file
+# @param line   specifies the line in file to scan, specifically a HETATM line
+# @return       returns a list of coords for current model, as a string
+################################################################################
+
+get_coords <- function(file, line) {
+    start_of_coords <- 32
+    coord_list <- list()
+    
+    x_coord <- substr(file[line], start_of_coords, start_of_coords+6)
+    y_coord <- substr(file[line], start_of_coords+8, start_of_coords+14)
+    z_coord <- substr(file[line], start_of_coords+16, start_of_coords+22)
+    coord_list <- c(coord_list, x_coord, y_coord, z_coord)
+}
+```
+
+Next, I needed a function to read the affinity of a given model.
+```{r}
+###################################################################################
+# gets the affinity of a file
+# @param file   character vector where each element is a line in a .pdbqt file
+# @param model  int specifying which model to look through for the affinity
+# @return       returns the affinity for model, as a string
+###################################################################################
+get_affinity <- function(file, model) {
+    total_lines <- length(file)
+    for (i in 1:total_lines) {
+        if (substr(file[i], 1, 7) == paste0("MODEL ", as.character(model))){
+            return (substr(file[i+1], 26, 29))
+        }
+    }
+    return("error, unable to find the current model's affinity")
+}
+```
+
+Lastly, I needed a function to return a list of integers representing the lines in a given model that contain HETATM coordinates.
+```{r}
+#############################################################################################################
+# gets the lines in a file which contain HETATM coords
+# @param file   character vector where each element is a line in a .pdbqt file
+# @param model  int which specifies which model to parse in the .pdbqt file
+# @return       returns a list of ints, where each int represents a line in model which has HETATM coords
+#############################################################################################################
+get_hetatm_lines <- function(file, model) {
+    total_lines <- length(file)
+    list_hetatm_positions = list()
+    in_recording_region = FALSE
+    for (i in 1:total_lines) {
+        if (substr(file[i], 1, 7) == paste0("MODEL ", as.character(model))){
+            in_recording_region = TRUE
+        }
+        if (substr(file[i], 1, 7) == paste0("MODEL ", as.character(model+1))){
+            in_recording_region = FALSE
+            break;
+        }
+        if (in_recording_region)
+        {   
+            if (substr(file[i], 1, 6) == "HETATM" || substr(file[i], 1, 4) == "ATOM"){
+                list_hetatm_positions <- c(list_hetatm_positions, i)
+            }
+        }
+    }
+    return (list_hetatm_positions)
+}
+```
+
+### Creating the csv file
+After writing my helper functions, I created a loop that iterates through all of the pdbqt files in the directory and parses the necessary information, compiling it into a data frame.
+```{r}
+
+
+# Initialize the progress bar
+total_length <- length(pdbqt_files)
+pb <- progress_bar$new(total = total_length * 9)
+
+temp_id <- 1
+
+for (i in 1:total_length) {  # For each pdbqt file
+  for (curr_model in 1:9) {  # For each model
+    
+    # Open and read the file
+    file <- readLines(file(pdbqt_files[i], open = "r"))
+    
+    # Get the affinity for the current model
+    curr_affinity <- get_affinity(file, curr_model)
+    
+    # Get all lines with HETATM coordinates for the current model
+    hetatm_lines <- get_hetatm_lines(file, curr_model)
+    
+    # Create vectors to accumulate coordinates
+    x_coords <- c()
+    y_coords <- c()
+    z_coords <- c()
+    
+    # For each line with HETATM coordinates, extract and accumulate coordinates
+    for (line_num in hetatm_lines) {
+      coords <- get_coords(file, line_num)
+      x_coords <- c(x_coords, as.numeric(coords[1]))
+      y_coords <- c(y_coords, as.numeric(coords[2]))
+      z_coords <- c(z_coords, as.numeric(coords[3]))
+    }
+    
+    # Calculate average coordinates if we have any
+    if (length(x_coords) > 0) {
+      avg_x <- mean(x_coords, na.rm = TRUE)
+      avg_y <- mean(y_coords, na.rm = TRUE)
+      avg_z <- mean(z_coords, na.rm = TRUE)
+      
+      # Add a new row to data_frame with averaged coordinates
+      new_row <- data.frame(
+        id = temp_id,
+        name = substr(pdbqt_files[i], 13, nchar(pdbqt_files[i]) - 6),
+        receptor = substr(pdbqt_files[i], 13, 20),
+        ligand = substr(pdbqt_files[i], 22, 24),
+        avg_x_coord = avg_x,
+        avg_y_coord = avg_y,
+        avg_z_coord = avg_z,
+        model = curr_model,
+        affinity = as.numeric(curr_affinity),
+        stringsAsFactors = FALSE
+      )
+      
+      data_frame <- rbind(data_frame, new_row)
+      temp_id <- temp_id + 1
+    }
+    
+    # Update progress bar
+    pb$tick()
+  }
+}
+```
+
+### Examing and save the data table
+I then had a data frame with 1,2780 rows containing the average position coordinates for each ligand.
+```{r}
+glimpse(data_frame)
+write.csv(data_frame, "cleaned_data_tables\\starting_data_11_4.csv")
+```
+
+### Filtering the data to only include ligands in the box
+Next, I filtered down the data frame to only include those models whose centers fall within the bounding box of the ligand. This box was assigned somewhat randomly, the dimensions were chosed based on the structure of the receptor, though because we tested 10 different receptors, the box was slightly offset in each of the trials.
+```{r}
+x_lower <- 153.0
+x_upper <- 167.0
+y_lower <- 177.5
+y_upper <- 188.5
+z_lower <- 148.5
+z_upper <- 167.0
+
+data_frame_in_box <- data_frame %>%
+  mutate(
+    in_range = ifelse(
+    avg_x_coord > x_lower & avg_x_coord < x_upper &
+    avg_y_coord > y_lower & avg_y_coord < y_upper &
+    avg_z_coord > z_lower & avg_z_coord < z_upper,
+    1, 0)
+  )
+    
+```
+
+I was curious to know about the distribution of the average atom positions in space, I expected the distribution to be multimodal, as I thought there might be multiple binding sites with more or less activity, but not many ligands centered outside of those pockets. I added a new column to the data frame which measued the distance between each average atom position and the center of the box.
+```{r}
+find_dist <- function(x1, y1, z1, x2, y2, z2) {
+  sqrt((x1 - x2)^2 + (y1 - y2)^2 + (z1 - z2)^2)
+}
+
+box_coord_x <- mean(c(x_lower, x_upper))
+box_coord_y <- mean(c(y_lower, y_upper))
+box_coord_z <- mean(c(z_lower, z_upper))
+
+data_frame_in_box <- data_frame_in_box %>%
+    rowwise() %>%
+    mutate(distance_from_center = find_dist(
+        avg_x_coord, avg_y_coord, avg_z_coord,
+        box_coord_x, box_coord_y, box_coord_z
+    )) %>%
+    ungroup()
+
+ggplot(data_frame_in_box, aes(x=distance_from_center)) + 
+     geom_histogram( binwidth=1, fill="#69b3a2", color="#e9ecef", alpha=0.9) +
+     ggtitle("Distribution of Average Ligand Positions Already in the box from Center of Box")
+```
+
+It looked like most of the ligands' centers of mass was quite close from the center of the box, as there is a nice curve of points around 4 or 5. However, there were some ligands that were in the box, but in the corners. Ideally, if all of the ligands tended to be centered around the middle of the box, we would expect to see half of a normal distribution centered at 0.
+
+### Data visualization
+Visualizing the data produced this interactive figure
+```{r}
+# Create the 3D scatter plot
+plot <- data_frame_in_box %>%
+  plot_ly(
+      x = ~avg_x_coord, 
+      y = ~avg_y_coord,
+      z = ~avg_z_coord,
+      color = ~as.factor(in_range),
+      colors = c("blue", "red")
+    ) %>%
+  add_markers() %>%
+  layout(scene = list(
+    xaxis = list(title = 'X'),
+    yaxis = list(title = 'Y'),
+    zaxis = list(title = 'Z')
+  ))
+
+plot
+```
+
+## Limitations
+Because the box was only an estimate, some models could have been classified as "outside of the binding site" because they were outside of the dimensions of the box, even though they were actually inside the binding site. Additionally, the box was chosen arbitrarily, and may not have encompassed the entire binding site. We also found that many of the models were on the surface of the receptor, rather than being buried deep within the binding site. Despite this, it is possible that there could have still been receptor activation in these cases. It is difficult to know structurally what triggers receptor activation.
+
+## Molecular Dynamics
+After analyzing the data, I attempted molecular dynamics using YASARA. It did not work at all, as the software ran for a week continously without finishing. It is not possible to know how much longer it would have taken to finish running, but given that we never specified any MD parameters, it could have taken months or even years. Because YASARA only offers molecular dynamics via macros, and there is no way to specify time step or time length, it is hard to know how long it ould have taken.
+
+## Future works
+In the future, I would like to try other methods of determining whether a ligand is bound to its receptor. I think it would be very interesting to run a gromacs simulaiton, if it could ever be installed on BisonNet. One method that comes to mind is calculating the RMSD between positions of the ligand. Another idea is to calculate the distance between each atom in the ligand and the receptor, and determine if there are any distances below a certain threshold.
